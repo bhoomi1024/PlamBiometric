@@ -10,6 +10,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@mediapipe/camera_utils": "^0.3.1675466862",
     "@mediapipe/hands": "^0.4.1675469240",
     "@tailwindcss/vite": "^4.1.4",
     "@tensorflow-models/handpose": "^0.1.0",

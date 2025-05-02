@@ -1,56 +1,70 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import cv2
-import numpy as np
+from pymongo import MongoClient
 import base64
-import mediapipe as mp
-import time
+import os
+import datetime
+from dotenv import load_dotenv
 
+load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(static_image_mode=True, max_num_hands=1)
+# MongoDB Atlas connection
+MONGO_URI = os.getenv("MONGO_URI")
+client = MongoClient(MONGO_URI)
+db = client['PalmDB']
+collection = db['users']
+
+UPLOAD_FOLDER = 'uploads'
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
 @app.route('/validate', methods=['POST'])
-def validate_palm():
+def validate():
     data = request.get_json()
+    name = data.get('name')
+    image_data = data.get('image')
+    if not name or not image_data:
+        return jsonify({"valid": False, "reason": "Name or image missing"}), 400
 
     # Decode the base64 image
-    img_data = data['image'].split(',')[1]
-    img_bytes = base64.b64decode(img_data)
-    img_array = np.frombuffer(img_bytes, np.uint8)
-    frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+    header, encoded = image_data.split(",", 1)
+    img_data = base64.b64decode(encoded)
+    filename = f"{name}_{datetime.datetime.utcnow().strftime('%Y%m%d%H%M%S')}.jpg"
+    filepath = os.path.join(UPLOAD_FOLDER, filename)
+    with open(filepath, 'wb') as f:
+        f.write(img_data)
 
-    # Process the image to find hands
-    results = hands.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+    user_doc = {
+        "name": name,
+        "image_path": filepath,
+        "createdAt": datetime.datetime.utcnow()
+    }
+    collection.insert_one(user_doc)
+    return jsonify({"valid": True})
 
-    if results.multi_hand_landmarks:
-        landmarks = results.multi_hand_landmarks[0]
+@app.route('/login-validate', methods=['POST'])
+def login_validate():
+    data = request.get_json()
+    image_data = data.get('image')
+    if not image_data:
+        return jsonify({"valid": False, "reason": "Image missing"}), 400
 
-        # Check if the palm is open (basic heuristic based on y-coordinates spread)
-        y_coords = [lm.y for lm in landmarks.landmark]
-        x_coords = [lm.x for lm in landmarks.landmark]
-        is_open = max(y_coords) - min(y_coords) > 0.3  # Adjust threshold if needed
+    # Simulated check — in real life use ML match
+    user = collection.find_one()
+    if user:
+        return jsonify({"valid": True})
+    return jsonify({"valid": False, "reason": "No match found"})
 
-        # Check alignment of palm (within the outline boundary)
-        min_x = min(x_coords)
-        max_x = max(x_coords)
-        min_y = min(y_coords)
-        max_y = max(y_coords)
-
-        # Palm aligned if within bounds (simulating the outline check)
-        if 0.2 <= min_x and max_x <= 0.8 and 0.2 <= min_y and max_y <= 0.8 and is_open:
-            # Save the image
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            filename = f"screenshot_{int(time.time())}.png"
-            cv2.imwrite(filename, gray)
-
-            return jsonify({'valid': True})
-        else:
-            return jsonify({'valid': False})
-    else:
-        return jsonify({'valid': False})
+@app.route('/user/<name>', methods=['GET'])
+def get_user(name):
+    user = collection.find_one({"name": name})
+    if not user:
+        return jsonify({"error": "User not found"}), 404
+    return jsonify({"name": user['name'], "image_path": user['image_path']})
 
 if __name__ == '__main__':
     app.run(debug=True)
+
+
