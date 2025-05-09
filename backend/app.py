@@ -6,6 +6,8 @@ import os
 import datetime
 import time
 from bson.objectid import ObjectId
+from PIL import Image
+import io
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -72,22 +74,27 @@ def validate():
         if not name:
             return jsonify({"valid": False, "reason": "Name is required"}), 400
 
-        # Decode the base64 image
+        # Decode the base64 image and convert to grayscale
         try:
             header, encoded = image_data.split(",", 1)
             binary_data = base64.b64decode(encoded)
+
+            # Open image with PIL
+            image = Image.open(io.BytesIO(binary_data))
+            grayscale_image = image.convert("L")  # Convert to grayscale
         except Exception as e:
+            print(f"Image processing error: {e}")
             return jsonify({"valid": False, "reason": "Invalid image data"}), 400
 
-        # Save the image to disk
+        # Save the grayscale image
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         filename = f"{name}_{timestamp}.jpg"
         filepath = os.path.join(UPLOAD_FOLDER, filename)
-        
+
         try:
-            with open(filepath, "wb") as f:
-                f.write(binary_data)
+            grayscale_image.save(filepath)
         except Exception as e:
+            print(f"Image save error: {e}")
             return jsonify({"valid": False, "reason": "Failed to save image"}), 500
 
         # Save to MongoDB if available
@@ -124,9 +131,6 @@ def login_validate():
         if not image_data:
             return jsonify({"valid": False, "reason": "Image missing"}), 400
 
-        # In a real app, you would compare the image with stored ones
-        # This is a simplified version that just checks if any user exists
-        
         if collection is not None:
             user = collection.find_one(sort=[("createdAt", -1)])
             if user:

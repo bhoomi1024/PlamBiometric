@@ -93,19 +93,10 @@ function PalmScan() {
 
     return () => {
       clearInterval(interval);
-      // if (hands.close) hands.close();
+    
     };
   }, [name]);
 
-  // useEffect(() => {
-  //   hands.onResults(handleResults);
-  //   // if (hands) {
-  //   //   console.log("name changed and hands called");
-
-  //   // } else {
-  //   //   console.log("No hand");
-  //   // }
-  // });
 
   const validatePalm = async (img, n) => {
     if (mode === "enroll" && !name.trim()) {
