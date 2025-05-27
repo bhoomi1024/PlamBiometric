@@ -1,6 +1,9 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from pymongo import MongoClient
+import cloudinary
+import cloudinary.uploader
+from cloudinary.utils import cloudinary_url
 import base64
 import os
 import datetime
@@ -8,6 +11,11 @@ import time
 from bson.objectid import ObjectId
 from PIL import Image
 import io
+import numpy as np
+import cv2
+from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+from tensorflow.keras.applications import MobileNetV2
+from sklearn.metrics.pairwise import cosine_similarity
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -16,6 +24,17 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png'}
+
+# Cloudinary config
+cloudinary.config(
+    cloud_name="foodiebuddy",
+    api_key="462752951787628",
+    api_secret="RfjLrGYlx7kb-OrSOjR-XylknUI",  # Replace with actual secret
+    secure=True
+)
+
+# Load MobileNetV2 Model
+model = MobileNetV2(weights="imagenet", include_top=False, pooling="avg", input_shape=(224, 224, 3))
 
 # MongoDB Connection
 def get_mongo_client():
@@ -58,6 +77,23 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+# Enhance palm veins and get embedded vector
+def enhance_vein_image(image):
+    gray = np.array(image.convert("L"))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    enhanced = clahe.apply(gray)
+    enhanced_rgb = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2RGB)
+    return Image.fromarray(enhanced_rgb)
+
+def get_palm_vein_embedding(image: Image.Image):
+    enhanced_image = enhance_vein_image(image)
+    resized = enhanced_image.resize((224, 224))
+    img_array = np.array(resized).astype("float32")
+    img_array = preprocess_input(np.expand_dims(img_array, axis=0))
+    embedding = model.predict(img_array)[0]
+    return embedding.tolist()
+
+
 @app.route('/validate', methods=['POST'])
 def validate():
     try:
@@ -96,6 +132,18 @@ def validate():
         except Exception as e:
             print(f"Image save error: {e}")
             return jsonify({"valid": False, "reason": "Failed to save image"}), 500
+        # Upload to Cloudinary
+        try:
+            cloud_result = cloudinary.uploader.upload(filepath, public_id=f"uploads/{filename}")
+            cloud_url = cloud_result.get("secure_url")
+        except Exception as e:
+            print(f"Cloudinary upload error: {e}")
+            return jsonify({"valid": False, "reason": "Cloudinary upload failed"}), 500
+        
+         # 🔥 Generate Embedded Vector from Palm Vein
+        embedded_vector = get_palm_vein_embedding(image)
+
+        
 
         # Save to MongoDB if available
         if collection is not None:
@@ -103,6 +151,8 @@ def validate():
                 user_doc = {
                     "name": name,
                     "image_path": filepath,
+                    "cloudinary_url": cloud_url,
+                    "embedding": embedded_vector,
                     "createdAt": datetime.datetime.now()
                 }
                 result = collection.insert_one(user_doc)
@@ -115,7 +165,9 @@ def validate():
             "valid": True,
             "message": "Enrollment successful",
             "image_path": filepath,
-            "name": name
+            "name": name,
+            "cloudinary_url": cloud_url,
+            "embedding_saved": True
         })
 
     except Exception as e:
@@ -131,19 +183,42 @@ def login_validate():
         if not image_data:
             return jsonify({"valid": False, "reason": "Image missing"}), 400
 
+        # Decode image
+        header, encoded = image_data.split(",", 1)
+        binary_data = base64.b64decode(encoded)
+        image = Image.open(io.BytesIO(binary_data))
+
+        # Generate embedding for query image
+        query_embedding = get_palm_vein_embedding(image)
+
+        # Match with database embeddings
         if collection is not None:
-            user = collection.find_one(sort=[("createdAt", -1)])
-            if user:
+            users = list(collection.find({}))
+            best_match = None
+            best_score = 0
+
+            for user in users:
+                db_embedding = np.array(user.get("embedding"))
+                similarity = cosine_similarity([query_embedding], [db_embedding])[0][0]
+
+                if similarity > best_score:
+                    best_score = similarity
+                    best_match = user
+
+            if best_score > 0.9:
                 return jsonify({
                     "valid": True,
-                    "name": user.get('name'),
-                    "message": "Login successful"
+                    "message": "Login successful",
+                    "name": best_match.get("name"),
+                    "cloudinary_url": best_match.get("cloudinary_url"),
+                    "similarity_score": best_score
                 })
-        
+
         return jsonify({
             "valid": False,
             "reason": "No matching palm found"
         })
+
 
     except Exception as e:
         print(f"Login validation error: {str(e)}")
@@ -157,10 +232,13 @@ def get_user(name):
     user = collection.find_one({"name": name})
     if not user:
         return jsonify({"error": "User not found"}), 404
+    
         
     return jsonify({
         "name": user['name'],
         "image_path": user.get('image_path'),
+        "cloudinary_url": user.get('cloudinary_url'),
+        "embedding": user.get('embedding', []),
         "createdAt": user.get('createdAt')
     })
 

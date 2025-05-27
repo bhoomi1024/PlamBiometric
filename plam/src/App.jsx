@@ -5,6 +5,7 @@ import ScanInstructions from "./pages/ScanInstructor";
 import PalmScan from "./pages/PalmScan";
 import SuccessScreen from "./pages/SuccessScreen";
 import EnrollmentSuccess from "./pages/EnrollmentSuccess";
+import LoginSuccessfully from "./pages/LoginSuccessfully";
 
 const App = () => {
   return (
@@ -16,6 +17,8 @@ const App = () => {
           <Route path="/palm-scan" element={<PalmScan />} />
           <Route path="/success" element={<SuccessScreen />} />
           <Route path="/enrollment-success" element={<EnrollmentSuccess />} />
+          <Route path="/login-successfully" element={<LoginSuccessfully/>} />
+          
         </Routes>
     
     </Router>
