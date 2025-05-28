@@ -48,7 +48,7 @@ function PalmScan() {
     if (isAligned) {
       setBorderColor("border-green-500");
       setMessage("Palm aligned!");
-      if (now - lastCaptureTime.current > 2000) {
+      if (now - lastCaptureTime.current > 3000) {
         lastCaptureTime.current = now;
         const img = webcamRef.current.getScreenshot();
         setScreenshot(img);

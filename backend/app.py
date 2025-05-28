@@ -121,6 +121,8 @@ def validate():
         except Exception as e:
             print(f"Image processing error: {e}")
             return jsonify({"valid": False, "reason": "Invalid image data"}), 400
+        
+        
 
         # Save the grayscale image
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
@@ -153,7 +155,9 @@ def validate():
                     "image_path": filepath,
                     "cloudinary_url": cloud_url,
                     "embedding": embedded_vector,
-                    "createdAt": datetime.datetime.now()
+                    "createdAt": datetime.datetime.now(),
+                    "match": None,
+                    "loginHistory": [],
                 }
                 result = collection.insert_one(user_doc)
                 if not result.inserted_id:
@@ -176,54 +180,168 @@ def validate():
 
 @app.route('/login-validate', methods=['POST'])
 def login_validate():
+  
     try:
+        # Debug: Log that request was received
+        print("Login validate endpoint hit")
+        
         data = request.get_json()
+        if not data:
+            print("No data received")
+            return jsonify({"valid": False, "reason": "No data provided"}), 400
+            
         image_data = data.get('image')
-
         if not image_data:
+            print("No image data received")
             return jsonify({"valid": False, "reason": "Image missing"}), 400
 
-        # Decode image
-        header, encoded = image_data.split(",", 1)
-        binary_data = base64.b64decode(encoded)
-        image = Image.open(io.BytesIO(binary_data))
+        # Debug: Log image data size
+        print(f"Received image data length: {len(image_data)}")
 
-        # Generate embedding for query image
-        query_embedding = get_palm_vein_embedding(image)
+        try:
+            # Handle base64 image data
+            if 'base64,' in image_data:
+                header, encoded = image_data.split(",", 1)
+            else:
+                encoded = image_data
+                
+            binary_data = base64.b64decode(encoded)
+            image = Image.open(io.BytesIO(binary_data))
+            
+            # Debug: Log image properties
+            print(f"Image opened successfully. Mode: {image.mode}, Size: {image.size}")
 
-        # Match with database embeddings
-        if collection is not None:
-            users = list(collection.find({}))
-            best_match = None
-            best_score = 0
+            # Convert to RGB if needed
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+                
+        except Exception as e:
+            print(f"Image processing failed: {str(e)}")
+            return jsonify({
+                "valid": False, 
+                "reason": f"Invalid image data: {str(e)}"
+            }), 400
 
-            for user in users:
-                db_embedding = np.array(user.get("embedding"))
-                similarity = cosine_similarity([query_embedding], [db_embedding])[0][0]
+        # Save the login attempt image (REGARDLESS OF MATCH)
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        filename = f"login_attempt_{timestamp}.jpg"
+        filepath = os.path.join(UPLOAD_FOLDER, filename)
+        
+        try:
+            image.save(filepath)
+            print(f"Login attempt image saved to: {filepath}")
+            
+            # Upload to Cloudinary
+            cloud_result = cloudinary.uploader.upload(filepath)
+            cloud_url = cloud_result.get("secure_url")
+            print(f"Image uploaded to Cloudinary: {cloud_url}")
+        except Exception as e:
+            print(f"Failed to save/upload login image: {str(e)}")
+            cloud_url = None
 
-                if similarity > best_score:
-                    best_score = similarity
+        # Get embedding
+        try:
+            query_embedding = get_palm_vein_embedding(image)
+            if not query_embedding or len(query_embedding) == 0:
+                raise ValueError("Empty embedding generated")
+            print("Embedding generated successfully")
+        except Exception as e:
+            print(f"Embedding generation failed: {str(e)}")
+            return jsonify({
+                "valid": False,
+                "reason": "Failed to process palm features"
+            }), 500
+
+        # Compare with stored users
+        users = list(collection.find({}))
+        best_match = None
+        best_score = 0
+        best_match_id = None
+
+        for user in users:
+            try:
+                db_embedding = np.array(user["embedding"])
+                if db_embedding.shape[0] == 0:
+                    continue
+                    
+                score = cosine_similarity([query_embedding], [db_embedding])[0][0]
+                if score > best_score:
+                    best_score = score
                     best_match = user
+                    best_match_id = user["_id"]
+            except Exception as e:
+                print(f"Error comparing with user {user.get('name')}: {str(e)}")
+                continue
 
-            if best_score > 0.9:
-                return jsonify({
-                    "valid": True,
-                    "message": "Login successful",
-                    "name": best_match.get("name"),
-                    "cloudinary_url": best_match.get("cloudinary_url"),
-                    "similarity_score": best_score
-                })
+        print(f"Best match score: {best_score}")
+
+        # If matched (lower threshold to 0.85)
+        if best_match and best_score > 0.85:
+            # Create login record
+            login_doc = {
+                "type": "login_attempt",
+                "image_path": filepath,
+                "cloudinary_url": cloud_url,
+                "embedding": query_embedding,
+                "matched_to": best_match_id,
+                "time": datetime.datetime.utcnow(),
+                "similarity_score": best_score,
+                "status": "success"
+            }
+            
+            # Update user's login history
+            update_result = collection.update_one(
+                {"_id": best_match_id},
+                {
+                    "$set": {"lastLogin": datetime.datetime.utcnow()},
+                    "$push": {
+                        "loginHistory": {
+                            "time": datetime.datetime.utcnow(),
+                            "image_path": filepath,
+                            "cloudinary_url": cloud_url,
+                            "similarity_score": best_score,
+                            "status": "success"
+                        }
+                    }
+                }
+            )
+
+            print(f"Login successful for {best_match['name']} with score {best_score}")
+            
+            return jsonify({
+                "valid": True,
+                "message": "Login successful",
+                "name": best_match["name"],
+                "match_id": str(best_match_id),
+                "similarity_score": best_score,
+                "cloudinary_url": best_match.get("cloudinary_url"),
+                "login_image_url": cloud_url
+            })
+
+        # Even if no match, save the attempt
+        login_doc = {
+            "type": "login_attempt",
+            "image_path": filepath,
+            "cloudinary_url": cloud_url,
+            "embedding": query_embedding,
+            "time": datetime.datetime.utcnow(),
+            "similarity_score": best_score,
+            "status": "failed"
+        }
+        collection.insert_one(login_doc)
 
         return jsonify({
             "valid": False,
-            "reason": "No matching palm found"
+            "reason": f"No matching palm found (best score: {best_score:.2f})",
+            "login_image_url": cloud_url  # Still return the attempt URL
         })
-
 
     except Exception as e:
         print(f"Login validation error: {str(e)}")
-        return jsonify({"valid": False, "reason": "Server error"}), 500
-
+        return jsonify({
+            "valid": False,
+            "reason": f"Server error: {str(e)}"
+        }), 500
 @app.route('/user/<name>', methods=['GET'])
 def get_user(name):
     if collection is None:
@@ -239,7 +357,9 @@ def get_user(name):
         "image_path": user.get('image_path'),
         "cloudinary_url": user.get('cloudinary_url'),
         "embedding": user.get('embedding', []),
-        "createdAt": user.get('createdAt')
+        "createdAt": user.get('createdAt'),
+        "match": str(user.get("match")) if user.get("match") else None,
+        "loginHistory": user.get("loginHistory", [])
     })
 
 if __name__ == '__main__':
