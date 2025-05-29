@@ -287,5 +287,4 @@ if (res.data.success || res.data.valid){
     </div>
   );
 }
-
 export default PalmScan;
