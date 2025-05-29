@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 import Webcam from "react-webcam";
 import Navbar from "../components/Navbar";
 import Footer from "../components/Footer";
@@ -17,11 +17,12 @@ function PalmScan() {
   const [screenshot, setScreenshot] = useState(null);
   const navigate = useNavigate();
   const lastCaptureTime = useRef(0);
-  const handsRef = useRef(null);
+  const isProcessing = useRef(false);
 
-  const handleResults = (results) => {
+  const handleResults = useCallback((results) => {
     const now = Date.now();
-    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    
+    if (isProcessing.current || !results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
       setBorderColor("border-red-500");
       setMessage("No hand detected.");
       return;
@@ -45,21 +46,29 @@ function PalmScan() {
     if (isAligned) {
       setBorderColor("border-green-500");
       setMessage("Palm aligned!");
+      
       if (now - lastCaptureTime.current > 3000) {
+        isProcessing.current = true;
         lastCaptureTime.current = now;
+        
         const img = webcamRef.current.getScreenshot();
         setScreenshot(img);
+        
         if (mode === "enroll") {
-          validatePalm(img, name);
+          validatePalm(img, name).finally(() => {
+            isProcessing.current = false;
+          });
         } else {
-          LoginvalidatePalm(img);
+          LoginvalidatePalm(img).finally(() => {
+            isProcessing.current = false;
+          });
         }
       }
     } else {
       setBorderColor("border-red-500");
       setMessage("Palm not aligned. Adjust your hand.");
     }
-  };
+  }, [mode, name]);
 
   useEffect(() => {
     const hands = new handsModule.Hands({
@@ -75,10 +84,10 @@ function PalmScan() {
     });
 
     hands.onResults(handleResults);
-    handsRef.current = hands;
 
-  if (webcamRef.current?.video) {
-      const camera = new cam.Camera(webcamRef.current.video, {
+    let camera;
+    if (webcamRef.current?.video) {
+      camera = new cam.Camera(webcamRef.current.video, {
         onFrame: async () => {
           await hands.send({ image: webcamRef.current.video });
         },
@@ -86,23 +95,23 @@ function PalmScan() {
         height: 480,
       });
       camera.start();
-
-      return () => {
-        camera.stop();
-        hands.close();
-      };
     }
-  }, [mode , name]);
 
+    return () => {
+      if (camera) camera.stop();
+      hands.close();
+    };
+  }, [handleResults]);
 
   const validatePalm = async (img, n) => {
+    if (loading) return;
     if (!name.trim()) {
       setMessage("Please enter your name to enroll.");
       return;
     }
 
     setLoading(true);
-    setMessage( "Validating and Enrolling...");
+    setMessage("Validating and Enrolling...");
 
     try {
       const res = await axios.post(
@@ -119,9 +128,7 @@ function PalmScan() {
       );
 
       if (res.data.valid) {
-        setMessage(
-          "Enrollment successful"
-        );
+        setMessage("Enrollment successful");
         if (mode === "enroll") {
           setTimeout(
             () =>
@@ -147,9 +154,12 @@ function PalmScan() {
       setLoading(false);
     }
   };
+
   const LoginvalidatePalm = async (img) => {
+    if (loading) return;
+    
     setLoading(true);
-    setMessage( "Validating Login");
+    setMessage("Validating Login");
 
     try {
       const res = await axios.post(
@@ -163,21 +173,19 @@ function PalmScan() {
           },
         }
       );
-if (res.data.success || res.data.valid){
-        setMessage(
-          "login successful"
-        );
+
+      if (res.data.success || res.data.valid) {
+        setMessage("Login successful");
         setScreenshot(img);
-          setTimeout(() => {
-        navigate("/login-successfully", {
-          state: {
-            screenshot: img,
-            user_id: res.data.user_id,
-            name: res.data.name,
-            
-          },
-        });
-      }, 1000);
+        setTimeout(() => {
+          navigate("/login-successfully", {
+            state: {
+              screenshot: img,
+              user_id: res.data.user_id,
+              name: res.data.name,
+            },
+          });
+        }, 1000);
       } else {
         setMessage(res.data.reason || "Validation failed. Please try again.");
       }
@@ -189,7 +197,7 @@ if (res.data.success || res.data.valid){
     }
   };
 
-   return (
+  return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-white via-blue-50 to-blue-100 text-gray-800">
       <Navbar />
       <main className="flex-grow flex flex-col items-center justify-center px-6 py-12">
@@ -285,4 +293,5 @@ if (res.data.success || res.data.valid){
     </div>
   );
 }
+
 export default PalmScan;

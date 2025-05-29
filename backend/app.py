@@ -29,7 +29,7 @@ ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png'}
 cloudinary.config(
     cloud_name="foodiebuddy",
     api_key="462752951787628",
-    api_secret="RfjLrGYlx7kb-OrSOjR-XylknUI",  # Replace with actual secret
+    api_secret="RfjLrGYlx7kb-OrSOjR-XylknUI",
     secure=True
 )
 
@@ -77,7 +77,6 @@ def allowed_file(filename):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# Enhance palm veins and get embedded vector
 def enhance_vein_image(image):
     gray = np.array(image.convert("L"))
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
@@ -92,7 +91,6 @@ def get_palm_vein_embedding(image: Image.Image):
     img_array = preprocess_input(np.expand_dims(img_array, axis=0))
     embedding = model.predict(img_array)[0]
     return embedding.tolist()
-
 
 @app.route('/validate', methods=['POST'])
 def validate():
@@ -110,20 +108,25 @@ def validate():
         if not name:
             return jsonify({"valid": False, "reason": "Name is required"}), 400
 
-        # Decode the base64 image and convert to grayscale
+        # Check for duplicate user
+        if collection is not None:
+            existing_user = collection.find_one({"name": name})
+            if existing_user:
+                return jsonify({
+                    "valid": False,
+                    "reason": "User with this name already exists"
+                }), 400
+
+        # Decode the base64 image
         try:
             header, encoded = image_data.split(",", 1)
             binary_data = base64.b64decode(encoded)
-
-            # Open image with PIL
             image = Image.open(io.BytesIO(binary_data))
-            grayscale_image = image.convert("L")  # Convert to grayscale
+            grayscale_image = image.convert("L")
         except Exception as e:
             print(f"Image processing error: {e}")
             return jsonify({"valid": False, "reason": "Invalid image data"}), 400
         
-        
-
         # Save the grayscale image
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         filename = f"{name}_{timestamp}.jpg"
@@ -134,6 +137,7 @@ def validate():
         except Exception as e:
             print(f"Image save error: {e}")
             return jsonify({"valid": False, "reason": "Failed to save image"}), 500
+
         # Upload to Cloudinary
         try:
             cloud_result = cloudinary.uploader.upload(filepath, public_id=f"uploads/{filename}")
@@ -142,10 +146,8 @@ def validate():
             print(f"Cloudinary upload error: {e}")
             return jsonify({"valid": False, "reason": "Cloudinary upload failed"}), 500
         
-         # 🔥 Generate Embedded Vector from Palm Vein
+        # Generate Embedded Vector from Palm Vein
         embedded_vector = get_palm_vein_embedding(image)
-
-        
 
         # Save to MongoDB if available
         if collection is not None:
@@ -185,38 +187,31 @@ def login_validate():
         if not data:
             return jsonify({"success": False, "reason": "No data provided"}), 400
             
-        
         image_data = data.get('image')
 
         if not image_data:
             return jsonify({"success": False, "reason": "Image missing"}), 400
 
-
-        # Decode the base64 image and convert to grayscale
+        # Decode the base64 image
         try:
             header, encoded = image_data.split(",", 1)
             binary_data = base64.b64decode(encoded)
-
-            # Open image with PIL
             image = Image.open(io.BytesIO(binary_data))
-            grayscale_image = image.convert("L")  # Convert to grayscale
+            grayscale_image = image.convert("L")
         except Exception as e:
-           return jsonify({"valid": False, "reason": "Invalid image data"}), 400
+            return jsonify({"valid": False, "reason": "Invalid image data"}), 400
         
-        
-
-    
         # Save login attempt image
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         filename = f"login_attempt_{timestamp}.jpg"
         filepath = os.path.join(UPLOAD_FOLDER, filename)
         
-
         try:
             grayscale_image.save(filepath)
         except Exception as e:
             print(f"Image save error: {e}")
             return jsonify({"valid": False, "reason": "Failed to save image"}), 500
+
         # Upload to Cloudinary
         try:
             cloud_result = cloudinary.uploader.upload(filepath, public_id=f"uploads/{filename}")
@@ -225,9 +220,8 @@ def login_validate():
             print(f"Cloudinary upload error: {e}")
             return jsonify({"valid": False, "reason": "Cloudinary upload failed"}), 500
         
-         # 🔥 Generate Embedded Vector from Palm Vein
+        # Generate Embedded Vector from Palm Vein
         query_embedding = get_palm_vein_embedding(image)
-
 
         # Compare with stored users
         users = list(collection.find({}))
@@ -312,7 +306,7 @@ def login_validate():
         return jsonify({
             "valid": False,
             "reason": f"No matching palm found (best score: {best_score:.2f})",
-            "login_image_url": cloud_url  # Still return the attempt URL
+            "login_image_url": cloud_url
         })
 
     except Exception as e:
@@ -321,6 +315,7 @@ def login_validate():
             "valid": False,
             "reason": f"Server error: {str(e)}"
         }), 500
+
 @app.route('/user/<name>', methods=['GET'])
 def get_user(name):
     if collection is None:
@@ -330,7 +325,6 @@ def get_user(name):
     if not user:
         return jsonify({"error": "User not found"}), 404
     
-        
     return jsonify({
         "name": user['name'],
         "image_path": user.get('image_path'),
