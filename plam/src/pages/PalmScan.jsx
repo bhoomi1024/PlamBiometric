@@ -293,5 +293,4 @@ function PalmScan() {
     </div>
   );
 }
-
 export default PalmScan;
