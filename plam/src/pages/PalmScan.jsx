@@ -289,5 +289,3 @@ if (res.data.success || res.data.valid){
 }
 
 export default PalmScan;
-
-
