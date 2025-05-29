@@ -17,18 +17,17 @@ function PalmScan() {
   const [screenshot, setScreenshot] = useState(null);
   const navigate = useNavigate();
   const lastCaptureTime = useRef(0);
+  const handsRef = useRef(null);
 
-  const handleResults = async (results) => {
+  
+
+  const handleResults = (results) => {
     const now = Date.now();
-    if (
-      !results.multiHandLandmarks ||
-      results.multiHandLandmarks.length === 0
-    ) {
+    if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
       setBorderColor("border-red-500");
       setMessage("No hand detected.");
       return;
     }
-    // console.log("handle triggered!!")
 
     const landmarks = results.multiHandLandmarks[0];
     const xs = landmarks.map((l) => l.x);
@@ -52,7 +51,11 @@ function PalmScan() {
         lastCaptureTime.current = now;
         const img = webcamRef.current.getScreenshot();
         setScreenshot(img);
-        await validatePalm(img, name);
+        if (mode === "enroll") {
+          validatePalm(img, name);
+        } else {
+          LoginvalidatePalm(img);
+        }
       }
     } else {
       setBorderColor("border-red-500");
@@ -60,10 +63,8 @@ function PalmScan() {
     }
   };
 
-  let hands;
-
   useEffect(() => {
-    hands = new handsModule.Hands({
+    const hands = new handsModule.Hands({
       locateFile: (file) =>
         `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`,
     });
@@ -76,43 +77,38 @@ function PalmScan() {
     });
 
     hands.onResults(handleResults);
+    handsRef.current = hands;
 
-    const interval = setInterval(() => {
-      if (webcamRef.current?.video) {
-        clearInterval(interval);
-        let camera = new cam.Camera(webcamRef.current.video, {
-          onFrame: async () => {
-            await hands.send({ image: webcamRef.current.video });
-          },
-          width: 640,
-          height: 480,
-        });
-        camera.start();
-      }
-    }, 500); // check every 500ms
+  if (webcamRef.current?.video) {
+      const camera = new cam.Camera(webcamRef.current.video, {
+        onFrame: async () => {
+          await hands.send({ image: webcamRef.current.video });
+        },
+        width: 640,
+        height: 480,
+      });
+      camera.start();
 
-    return () => {
-      clearInterval(interval);
-    
-    };
-  }, [name]);
+      return () => {
+        camera.stop();
+        hands.close();
+      };
+    }
+  }, [mode , name]);
 
 
   const validatePalm = async (img, n) => {
-    if (mode === "enroll" && !name.trim()) {
+    if (!name.trim()) {
       setMessage("Please enter your name to enroll.");
       return;
     }
 
     setLoading(true);
-    setMessage(
-      mode === "enroll" ? "Validating and Enrolling..." : "Validating login..."
-    );
+    setMessage( "Validating and Enrolling...");
 
     try {
-      const endpoint = mode === "enroll" ? "/validate" : "/login-validate";
       const res = await axios.post(
-        `http://localhost:5000${endpoint}`,
+        "http://localhost:5000/validate",
         {
           image: img,
           name: n,
@@ -126,7 +122,7 @@ function PalmScan() {
 
       if (res.data.valid) {
         setMessage(
-          mode === "enroll" ? "Enrollment successful!" : "Login successful!"
+          "Enrollment successful"
         );
         if (mode === "enroll") {
           setTimeout(
@@ -153,8 +149,49 @@ function PalmScan() {
       setLoading(false);
     }
   };
+  const LoginvalidatePalm = async (img) => {
+    setLoading(true);
+    setMessage( "Validating Login");
 
-  return (
+    try {
+      const res = await axios.post(
+        "http://localhost:5000/login-validate",
+        {
+          image: img,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+if (res.data.success || res.data.valid){
+        setMessage(
+          "login successful"
+        );
+        setScreenshot(img);
+          setTimeout(() => {
+        navigate("/login-successfully", {
+          state: {
+            screenshot: img,
+            user_id: res.data.user_id,
+            name: res.data.name,
+            
+          },
+        });
+      }, 1000);
+      } else {
+        setMessage(res.data.reason || "Validation failed. Please try again.");
+      }
+    } catch (e) {
+      console.error("API Error:", e);
+      setMessage(e.response?.data?.reason || "Server error. Please try again later.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+   return (
     <div className="min-h-screen flex flex-col bg-gradient-to-br from-white via-blue-50 to-blue-100 text-gray-800">
       <Navbar />
       <main className="flex-grow flex flex-col items-center justify-center px-6 py-12">
@@ -209,6 +246,7 @@ function PalmScan() {
               className="absolute inset-0 w-full h-full object-cover"
               screenshotFormat="image/jpeg"
               videoConstraints={{ facingMode: "user" }}
+              mirrored={true}
             />
             <img
               src="/palm-outline.png"
@@ -224,7 +262,7 @@ function PalmScan() {
                 : "Show Open Palm to Login"}
             </h2>
             <p className="text-lg text-gray-600">
-              Hold hand 5–7cm away, open palm.
+              Hold hand 5-7cm away, open palm.
             </p>
           </div>
 
@@ -251,3 +289,5 @@ function PalmScan() {
 }
 
 export default PalmScan;
+
+

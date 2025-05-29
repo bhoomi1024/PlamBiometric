@@ -180,77 +180,54 @@ def validate():
 
 @app.route('/login-validate', methods=['POST'])
 def login_validate():
-  
     try:
-        # Debug: Log that request was received
-        print("Login validate endpoint hit")
-        
         data = request.get_json()
         if not data:
-            print("No data received")
-            return jsonify({"valid": False, "reason": "No data provided"}), 400
+            return jsonify({"success": False, "reason": "No data provided"}), 400
             
+        
         image_data = data.get('image')
+
         if not image_data:
-            print("No image data received")
-            return jsonify({"valid": False, "reason": "Image missing"}), 400
+            return jsonify({"success": False, "reason": "Image missing"}), 400
 
-        # Debug: Log image data size
-        print(f"Received image data length: {len(image_data)}")
 
+        # Decode the base64 image and convert to grayscale
         try:
-            # Handle base64 image data
-            if 'base64,' in image_data:
-                header, encoded = image_data.split(",", 1)
-            else:
-                encoded = image_data
-                
+            header, encoded = image_data.split(",", 1)
             binary_data = base64.b64decode(encoded)
+
+            # Open image with PIL
             image = Image.open(io.BytesIO(binary_data))
-            
-            # Debug: Log image properties
-            print(f"Image opened successfully. Mode: {image.mode}, Size: {image.size}")
-
-            # Convert to RGB if needed
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-                
+            grayscale_image = image.convert("L")  # Convert to grayscale
         except Exception as e:
-            print(f"Image processing failed: {str(e)}")
-            return jsonify({
-                "valid": False, 
-                "reason": f"Invalid image data: {str(e)}"
-            }), 400
+           return jsonify({"valid": False, "reason": "Invalid image data"}), 400
+        
+        
 
-        # Save the login attempt image (REGARDLESS OF MATCH)
+    
+        # Save login attempt image
         timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
         filename = f"login_attempt_{timestamp}.jpg"
         filepath = os.path.join(UPLOAD_FOLDER, filename)
         
-        try:
-            image.save(filepath)
-            print(f"Login attempt image saved to: {filepath}")
-            
-            # Upload to Cloudinary
-            cloud_result = cloudinary.uploader.upload(filepath)
-            cloud_url = cloud_result.get("secure_url")
-            print(f"Image uploaded to Cloudinary: {cloud_url}")
-        except Exception as e:
-            print(f"Failed to save/upload login image: {str(e)}")
-            cloud_url = None
 
-        # Get embedding
         try:
-            query_embedding = get_palm_vein_embedding(image)
-            if not query_embedding or len(query_embedding) == 0:
-                raise ValueError("Empty embedding generated")
-            print("Embedding generated successfully")
+            grayscale_image.save(filepath)
         except Exception as e:
-            print(f"Embedding generation failed: {str(e)}")
-            return jsonify({
-                "valid": False,
-                "reason": "Failed to process palm features"
-            }), 500
+            print(f"Image save error: {e}")
+            return jsonify({"valid": False, "reason": "Failed to save image"}), 500
+        # Upload to Cloudinary
+        try:
+            cloud_result = cloudinary.uploader.upload(filepath, public_id=f"uploads/{filename}")
+            cloud_url = cloud_result.get("secure_url")
+        except Exception as e:
+            print(f"Cloudinary upload error: {e}")
+            return jsonify({"valid": False, "reason": "Cloudinary upload failed"}), 500
+        
+         # 🔥 Generate Embedded Vector from Palm Vein
+        query_embedding = get_palm_vein_embedding(image)
+
 
         # Compare with stored users
         users = list(collection.find({}))
@@ -277,6 +254,7 @@ def login_validate():
 
         # If matched (lower threshold to 0.85)
         if best_match and best_score > 0.85:
+            
             # Create login record
             login_doc = {
                 "type": "login_attempt",
@@ -309,6 +287,7 @@ def login_validate():
             print(f"Login successful for {best_match['name']} with score {best_score}")
             
             return jsonify({
+                "success": True,
                 "valid": True,
                 "message": "Login successful",
                 "name": best_match["name"],
