@@ -19,8 +19,6 @@ function PalmScan() {
   const lastCaptureTime = useRef(0);
   const handsRef = useRef(null);
 
-  
-
   const handleResults = (results) => {
     const now = Date.now();
     if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
