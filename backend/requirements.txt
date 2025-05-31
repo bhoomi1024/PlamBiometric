@@ -3,3 +3,8 @@ flask-cors
 pymongo
 python-dotenv
 pillow
+cloudinary
+numpy
+opencv-python
+tensorflow
+scikit-learn
