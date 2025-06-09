@@ -47,7 +47,7 @@
 
 ## 📸 Screenshots
 
-![Palm Secure UI](src/assets/front.png)
+![Palm Secure UI](https://github.com/bhoomi1024/PlamBiometric/blob/main/plam/src/assets/front.png)
 
 ---
 
