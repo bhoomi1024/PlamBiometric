@@ -16,6 +16,9 @@ import cv2
 from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
 from tensorflow.keras.applications import MobileNetV2
 from sklearn.metrics.pairwise import cosine_similarity
+from dotenv import load_dotenv
+load_dotenv()
+
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -27,9 +30,9 @@ ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png'}
 
 # Cloudinary config
 cloudinary.config(
-    cloud_name="foodiebuddy",
-    api_key="462752951787628",
-    api_secret="RfjLrGYlx7kb-OrSOjR-XylknUI",
+    cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
+    api_key=os.getenv("CLOUDINARY_API_KEY"),
+    api_secret=os.getenv("CLOUDINARY_API_SECRET"),
     secure=True
 )
 
@@ -44,7 +47,7 @@ def get_mongo_client():
     for attempt in range(max_retries):
         try:
             client = MongoClient(
-                "mongodb+srv://bhoomi:Bhoomi_123@plam.iog9krm.mongodb.net/?retryWrites=true&w=majority&appName=plam", 
+                os.getenv("MONGO_URI"), 
                 serverSelectionTimeoutMS=5000,
                 socketTimeoutMS=30000,
                 connectTimeoutMS=30000
